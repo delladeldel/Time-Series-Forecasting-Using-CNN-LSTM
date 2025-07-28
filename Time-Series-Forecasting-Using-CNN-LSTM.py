@@ -65,17 +65,24 @@ if st.button("🔮 Prediksi 10 Menit ke Depan"):
     try:
         # Preprocessing
         scaled_data = scaler.transform(np.array(data).reshape(-1, 1)).flatten()
-        input_data = scaled_data.reshape((1, 60, 1))
+        input_seq = list(scaled_data)  # list agar bisa diappend terus-menerus
 
-        # Prediksi
-        prediction = model.predict(input_data)[0]
-        predicted_values = scaler.inverse_transform(prediction.reshape(-1, 1)).flatten()
+        predicted_scaled = []
+
+        # Lakukan prediksi autoregressive sebanyak 60 kali
+        for i in range(60):
+            last_60 = np.array(input_seq[-60:]).reshape(1, 60, 1)
+            pred = model.predict(last_60, verbose=0)[0][0]
+            predicted_scaled.append(pred)
+            input_seq.append(pred)
+
+        # Invers transform ke nilai asli
+        predicted_values = scaler.inverse_transform(np.array(predicted_scaled).reshape(-1, 1)).flatten()
 
         # Visualisasi
         st.subheader("📊 Hasil Prediksi")
-
         fig, ax = plt.subplots(figsize=(10, 4))
-        time = np.arange(1, len(predicted_values) + 1) * 10  # 10 detik interval
+        time = np.arange(1, 61) * 10  # 10 detik interval untuk 60 titik data
         ax.plot(time, predicted_values, marker='o', label="Prediksi", color='orange')
         ax.set_xlabel("Detik ke-")
         ax.set_ylabel("Tag Value")
@@ -90,6 +97,15 @@ if st.button("🔮 Prediksi 10 Menit ke Depan"):
             "Prediksi Tag Value": predicted_values
         })
         st.dataframe(result_df)
+
+        # Tambahkan tombol download
+        csv = result_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Hasil Prediksi sebagai CSV",
+            data=csv,
+            file_name='hasil_prediksi.csv',
+            mime='text/csv',
+        )
 
     except Exception as e:
         st.error(f"Terjadi error saat prediksi: {e}")
