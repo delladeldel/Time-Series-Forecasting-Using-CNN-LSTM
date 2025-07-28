@@ -11,7 +11,7 @@ st.set_page_config(page_title="Time Series Forecasting", layout="wide")
 # Load model & scaler
 @st.cache_resource
 def load_model_and_scaler():
-    model = load_model("cnn_lstm_model.keras")
+    model = load_model("cnn_lstm_model.h5")
     scaler = joblib.load("scaler.joblib")
     return model, scaler
 
