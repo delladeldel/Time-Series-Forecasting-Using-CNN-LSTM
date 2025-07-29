@@ -2,90 +2,81 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import tempfile
 import joblib
-import os
 from keras.models import model_from_json
 
-st.set_page_config(page_title="Prediksi CNN+LSTM", layout="wide")
-st.title("📈 Prediksi Time Series dengan CNN + LSTM")
+st.set_page_config(page_title="Forecast CNN+LSTM", layout="wide")
+st.title("📈 Forecast 60 Langkah ke Depan dengan CNN + LSTM")
 
-# Upload semua file yang dibutuhkan
-json_file = st.file_uploader("Upload Struktur Model (model_structure.json)", type=["json"])
-weights_file = st.file_uploader("Upload Bobot Model (model_weights.h5)", type=["h5"])
-scaler_file = st.file_uploader("Upload Scaler (.joblib)", type=["joblib"])
-csv_file = st.file_uploader("Upload Data CSV (berisi 'ddate' dan 'tag_value')", type=["csv"])
+# ====== Load model & scaler dari lokal ======
+MODEL_JSON_PATH = "model_structure.json"
+MODEL_WEIGHTS_PATH = "model_weights.weights.h5"
+SCALER_PATH = "scaler.joblib"
 
-# Cek semua file sudah diunggah
-if json_file and weights_file and scaler_file and csv_file:
-    # Simpan file sementara
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as tmp_json:
-        tmp_json.write(json_file.read())
-        json_path = tmp_json.name
+with open(MODEL_JSON_PATH, "r") as f:
+    model_json = f.read()
+model = model_from_json(model_json)
+model.load_weights(MODEL_WEIGHTS_PATH)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_weights:
-        tmp_weights.write(weights_file.read())
-        weights_path = tmp_weights.name
+scaler = joblib.load(SCALER_PATH)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".joblib") as tmp_scaler:
-        tmp_scaler.write(scaler_file.read())
-        scaler_path = tmp_scaler.name
+# ====== Upload CSV dari pengguna ======
+csv_file = st.file_uploader("📤 Upload Data CSV (berisi 'ddate' & 'tag_value')", type=["csv"])
 
-    # Load model structure
-    with open(json_path, "r") as f:
-        model_json = f.read()
-    model = model_from_json(model_json)
-
-    # Load model weights
-    model.load_weights(weights_path)
-
-    # Load scaler
-    scaler = joblib.load(scaler_path)
-
-    # Load data
+if csv_file:
     df = pd.read_csv(csv_file)
     df['ddate'] = pd.to_datetime(df['ddate'])
     df = df.sort_values('ddate')
+    st.success("✅ Data berhasil dimuat.")
+    st.dataframe(df.tail(10))
 
-    # Normalize data
+    # Pilih window size
+    window_size = st.slider("🎚️ Pilih Window Size:", min_value=10, max_value=200, value=60, step=10)
+
+    # Normalisasi data
     scaled_data = scaler.transform(df[['tag_value']])
+    last_window = scaled_data[-window_size:].reshape(1, window_size, 1)
 
-    # Buat window input
-    def create_sequences(data, window_size=60):
-        return np.array([data[i-window_size:i] for i in range(window_size, len(data))])
+    # Forecast 60 langkah ke depan
+    steps_ahead = 60
+    preds = []
 
-    window_size = 60
-    X_input = create_sequences(scaled_data, window_size)
+    for _ in range(steps_ahead):
+        pred_scaled = model.predict(last_window, verbose=0)
+        pred_inv = scaler.inverse_transform(pred_scaled)[0][0]
+        preds.append(pred_inv)
 
-    if len(X_input) == 0:
-        st.warning("Jumlah data kurang dari window size (60). Tidak dapat diprediksi.")
-    else:
-        # Prediksi
-        y_pred_scaled = model.predict(X_input)
-        y_pred = scaler.inverse_transform(y_pred_scaled)
+        # Update input window
+        last_window = np.append(last_window[:, 1:, :], [[[pred_scaled[0][0]]]], axis=1)
 
-        # Gabungkan prediksi ke dataframe
-        df_pred = df.iloc[window_size:].copy()
-        df_pred['predicted'] = y_pred
+    # Perkirakan interval waktu
+    time_interval = df['ddate'].diff().dropna().mode()[0]
+    last_time = df['ddate'].iloc[-1]
+    future_dates = [last_time + (i + 1) * time_interval for i in range(steps_ahead)]
 
-        # Tampilkan data tabel
-        st.subheader("🗃️ Data dan Hasil Prediksi")
-        st.dataframe(df_pred[['ddate', 'tag_value', 'predicted']].head(20))
+    # Buat DataFrame hasil prediksi ke depan
+    df_future = pd.DataFrame({
+        'ddate': future_dates,
+        'predicted': preds
+    })
 
-        # Visualisasi
-        st.subheader("📊 Grafik Perbandingan")
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(df_pred['ddate'], df_pred['tag_value'], label="Aktual", color='blue')
-        ax.plot(df_pred['ddate'], df_pred['predicted'], label="Prediksi", color='orange')
-        ax.set_xlabel("Waktu")
-        ax.set_ylabel("Nilai")
-        ax.legend()
-        st.pyplot(fig)
+    # ====== Tampilkan hasil ======
+    st.subheader("🗃️ Hasil Forecast 60 Langkah ke Depan")
+    st.dataframe(df_future)
 
-    # Bersihkan file temp
-    os.remove(json_path)
-    os.remove(weights_path)
-    os.remove(scaler_path)
+    # ====== Visualisasi ======
+    st.subheader("📊 Grafik Prediksi Masa Depan")
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(df['ddate'], df['tag_value'], label="Data Historis", color='blue')
+    ax.plot(df_future['ddate'], df_future['predicted'], label="Forecast", color='red')
+    ax.set_xlabel("Waktu")
+    ax.set_ylabel("Nilai")
+    ax.legend()
+    st.pyplot(fig)
 
+    # ====== Download CSV ======
+    st.subheader("📥 Unduh Hasil Forecast")
+    forecast_csv = df_future.to_csv(index=False).encode('utf-8')
+    st.download_button("⬇️ Download sebagai CSV", data=forecast_csv, file_name="forecast_60_langkah.csv", mime="text/csv")
 else:
-    st.info("Silakan upload keempat file: struktur model (.json), bobot model (.h5), scaler (.joblib), dan data (.csv)")
+    st.info("Silakan upload file CSV terlebih dahulu.")
