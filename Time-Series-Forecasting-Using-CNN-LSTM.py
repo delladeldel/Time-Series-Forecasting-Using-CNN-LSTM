@@ -3,21 +3,16 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import joblib
-from keras.models import model_from_json
+from keras.models import load_model
 
 st.set_page_config(page_title="Forecast CNN+LSTM", layout="wide")
 st.title("📈 Forecast 60 Langkah ke Depan dengan CNN + LSTM")
 
 # ====== Load model & scaler dari lokal ======
-MODEL_JSON_PATH = "model_structure.json"
-MODEL_WEIGHTS_PATH = "model_weights.weights.h5"
+MODEL_PATH = "cnn_lstm_model.keras"
 SCALER_PATH = "scaler.joblib"
 
-with open(MODEL_JSON_PATH, "r") as f:
-    model_json = f.read()
-model = model_from_json(model_json)
-model.load_weights(MODEL_WEIGHTS_PATH)
-
+model = load_model(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
 
 # ====== Upload CSV dari pengguna ======
@@ -33,7 +28,7 @@ if csv_file:
     # Pilih window size
     window_size = st.slider("🎚️ Pilih Window Size:", min_value=10, max_value=200, value=60, step=10)
 
-    # Normalisasi data
+    # Normalisasi data dan ambil window terakhir
     scaled_data = scaler.transform(df[['tag_value']])
     last_window = scaled_data[-window_size:].reshape(1, window_size, 1)
 
@@ -45,16 +40,14 @@ if csv_file:
         pred_scaled = model.predict(last_window, verbose=0)
         pred_inv = scaler.inverse_transform(pred_scaled)[0][0]
         preds.append(pred_inv)
-
-        # Update input window
         last_window = np.append(last_window[:, 1:, :], [[[pred_scaled[0][0]]]], axis=1)
 
-    # Perkirakan interval waktu
+    # Buat timestamp prediksi ke depan
     time_interval = df['ddate'].diff().dropna().mode()[0]
     last_time = df['ddate'].iloc[-1]
     future_dates = [last_time + (i + 1) * time_interval for i in range(steps_ahead)]
 
-    # Buat DataFrame hasil prediksi ke depan
+    # Buat dataframe hasil
     df_future = pd.DataFrame({
         'ddate': future_dates,
         'predicted': preds
@@ -64,7 +57,7 @@ if csv_file:
     st.subheader("🗃️ Hasil Forecast 60 Langkah ke Depan")
     st.dataframe(df_future)
 
-    # ====== Visualisasi ======
+    # ====== Grafik ======
     st.subheader("📊 Grafik Prediksi Masa Depan")
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(df['ddate'], df['tag_value'], label="Data Historis", color='blue')
@@ -74,7 +67,7 @@ if csv_file:
     ax.legend()
     st.pyplot(fig)
 
-    # ====== Download CSV ======
+    # ====== Download ======
     st.subheader("📥 Unduh Hasil Forecast")
     forecast_csv = df_future.to_csv(index=False).encode('utf-8')
     st.download_button("⬇️ Download sebagai CSV", data=forecast_csv, file_name="forecast_60_langkah.csv", mime="text/csv")
