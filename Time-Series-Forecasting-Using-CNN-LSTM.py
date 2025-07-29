@@ -1,111 +1,75 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
-import joblib
-from tensorflow.keras.models import load_model
+import numpy as np
 import matplotlib.pyplot as plt
+from keras.models import load_model
+import joblib
 
-# Set halaman Streamlit
-st.set_page_config(page_title="Time Series Forecasting", layout="wide")
+# Konfigurasi halaman
+st.set_page_config(page_title="Prediksi CNN+LSTM", layout="wide")
+st.title("📈 Prediksi Time Series dengan CNN + LSTM")
 
 # Load model & scaler
 @st.cache_resource
 def load_model_and_scaler():
-    model = load_model("cnn_lstm_model.h5")
+    model = load_model("cnn_lstm_model.keras")
     scaler = joblib.load("scaler.joblib")
     return model, scaler
 
 model, scaler = load_model_and_scaler()
 
-st.title("📈 Prediksi Tag Value 10 Menit ke Depan (CNN-LSTM)")
-st.markdown("""
-Silakan masukkan data `tag_value` terakhir sebanyak **60 data poin** 
-(dengan interval 10 detik antar data poin).
-""")
+# Fungsi membuat sequence sliding window
+def create_sequences(data, window_size=60):
+    X = []
+    for i in range(window_size, len(data)):
+        X.append(data[i - window_size:i])
+    return np.array(X)
 
-# Inisialisasi
-data = None
+# Upload file CSV
+uploaded_file = st.file_uploader("Unggah file CSV dengan kolom 'ddate' dan 'tag_value'", type=["csv"])
 
-# Input: Manual atau Upload
-option = st.radio("Pilih metode input:", ["Manual", "Upload CSV"], horizontal=True)
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
 
-if option == "Manual":
-    data_input = st.text_area("Masukkan 60 nilai tag_value (pisahkan dengan koma):", height=150)
-    if data_input:
-        try:
-            data = [float(i.strip()) for i in data_input.split(",") if i.strip()]
-            if len(data) != 60:
-                st.error("Jumlah data harus tepat 60.")
-                data = None
-        except ValueError:
-            st.error("Pastikan semua nilai berupa angka.")
-            data = None
+    if 'ddate' not in df.columns or 'tag_value' not in df.columns:
+        st.error("CSV harus memiliki kolom 'ddate' dan 'tag_value'.")
+    else:
+        # Ubah timestamp
+        df['ddate'] = pd.to_datetime(df['ddate'])
 
-elif option == "Upload CSV":
-    uploaded_file = st.file_uploader("Upload file CSV (harus punya kolom: tag_value)", type=["csv"])
-    if uploaded_file is not None:
-        try:
-            df = pd.read_csv(uploaded_file)
-            if "tag_value" not in df.columns:
-                st.error("Kolom 'tag_value' tidak ditemukan.")
-            elif len(df) < 60:
-                st.error("CSV harus memiliki minimal 60 data.")
-            else:
-                data = df["tag_value"].values[-60:]
-        except Exception as e:
-            st.error(f"Gagal membaca file: {e}")
-            data = None
+        # Sort data jika belum urut
+        df = df.sort_values('ddate')
 
-# Prediksi jika data valid
-if st.button("🔮 Prediksi 10 Menit ke Depan"):
-    if data is None:
-        st.warning("Silakan masukkan data yang valid terlebih dahulu.")
-        st.stop()
+        # Normalisasi
+        scaled_data = scaler.transform(df[['tag_value']])
 
-    try:
-        # Preprocessing
-        scaled_data = scaler.transform(np.array(data).reshape(-1, 1)).flatten()
-        input_seq = list(scaled_data)  # list agar bisa diappend terus-menerus
+        # Buat window input
+        window_size = 60
+        X_input = create_sequences(scaled_data, window_size)
 
-        predicted_scaled = []
+        if len(X_input) == 0:
+            st.warning("Data terlalu sedikit untuk dibuat sequence (minimal 60 baris).")
+        else:
+            # Prediksi
+            y_pred_scaled = model.predict(X_input)
+            y_pred = scaler.inverse_transform(y_pred_scaled)
 
-        # Lakukan prediksi autoregressive sebanyak 60 kali
-        for i in range(60):
-            last_60 = np.array(input_seq[-60:]).reshape(1, 60, 1)
-            pred = model.predict(last_60, verbose=0)[0][0]
-            predicted_scaled.append(pred)
-            input_seq.append(pred)
+            # Gabungkan ke DataFrame (disesuaikan offset window)
+            df_pred = df.iloc[window_size:].copy()
+            df_pred['predicted'] = y_pred
 
-        # Invers transform ke nilai asli
-        predicted_values = scaler.inverse_transform(np.array(predicted_scaled).reshape(-1, 1)).flatten()
+            # Tampilkan data tabel
+            st.subheader("🗃️ Data Asli dan Prediksi")
+            st.dataframe(df_pred[['ddate', 'tag_value', 'predicted']].head(20))
 
-        # Visualisasi
-        st.subheader("📊 Hasil Prediksi")
-        fig, ax = plt.subplots(figsize=(10, 4))
-        time = np.arange(1, 61) * 10  # 10 detik interval untuk 60 titik data
-        ax.plot(time, predicted_values, marker='o', label="Prediksi", color='orange')
-        ax.set_xlabel("Detik ke-")
-        ax.set_ylabel("Tag Value")
-        ax.set_title("Prediksi 10 Menit (60 titik data, tiap 10 detik)")
-        ax.grid(True)
-        ax.legend()
-        st.pyplot(fig)
-
-        # Tampilkan hasil dalam tabel
-        result_df = pd.DataFrame({
-            "Waktu (detik ke-)": time,
-            "Prediksi Tag Value": predicted_values
-        })
-        st.dataframe(result_df)
-
-        # Tambahkan tombol download
-        csv = result_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Hasil Prediksi sebagai CSV",
-            data=csv,
-            file_name='hasil_prediksi.csv',
-            mime='text/csv',
-        )
-
-    except Exception as e:
-        st.error(f"Terjadi error saat prediksi: {e}")
+            # Plot
+            st.subheader("📊 Visualisasi Prediksi vs Data Aktual")
+            fig, ax = plt.subplots(figsize=(12, 6))
+            ax.plot(df_pred['ddate'], df_pred['tag_value'], label="Aktual", color='blue')
+            ax.plot(df_pred['ddate'], df_pred['predicted'], label="Prediksi", color='orange')
+            ax.set_xlabel("Waktu")
+            ax.set_ylabel("Nilai")
+            ax.legend()
+            st.pyplot(fig)
+else:
+    st.info("Silakan unggah file CSV untuk melakukan prediksi.")
