@@ -10,13 +10,8 @@ st.set_page_config(page_title="Prediksi CNN+LSTM", layout="wide")
 st.title("📈 Prediksi Time Series dengan CNN + LSTM")
 
 # Load model & scaler
-@st.cache_resource
-def load_model_and_scaler():
-    model = load_model("cnn_lstm_model.keras")
-    scaler = joblib.load("scaler.joblib")
-    return model, scaler
-
-model, scaler = load_model_and_scaler()
+model = load_model("cnn_lstm_model.keras")
+scaler = joblib.load("scaler.joblib")
 
 # Fungsi membuat sequence sliding window
 def create_sequences(data, window_size=60):
